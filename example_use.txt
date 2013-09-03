@@ -1,0 +1,15 @@
+...\eep-erl-master> erl -pa ebin -sname myserver
+(myserver@...)...> W1 = a_window_slidingtime:start(a_repeated_login, 60000, 5000).
+(myserver@...)...> W2 = a_window_slidingtime:start(a_multiple_hosts, 120000, 5000).
+(myserver@...)...> W1 ! {add_handler, eep_emit_trace, []}.
+(myserver@...)...> W2 ! {add_handler, eep_emit_trace, []}.
+(myserver@...)...> And = a_repeatedlogin_and_multiplehosts:start().
+(myserver@...)...> W1 ! {conjunction, And}.
+(myserver@...)...> W2 ! {conjunction, And}.
+(myserver@...)...> S = a_stream:start().
+(myserver@...)...> S ! {addWindow, W1}.
+(myserver@...)...> S ! {addWindow, W2}.
+
+...process incoming events...
+
+(myserver@...)...> S ! stop.
