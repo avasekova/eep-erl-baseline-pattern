@@ -24,12 +24,12 @@ init() ->
   #a_multiple_hosts{hosts = dict:new()}.
 
 accumulate(State, Event) ->
-  Type = a_utils:get("type", Event),
+  {"type", Type} = lists:keyfind("type", 1, Event),
   case Type of
     "org.ssh.Daemon#Login" ->
-      Host = a_utils:get("host", Event),
-      Payload = a_utils:get("_", Event),
-      SourceHost = a_utils:get("sourceHost", Payload),
+      {"host", Host} = lists:keyfind("host", 1, Event),
+      {"_", Payload} = lists:keyfind("_", 1, Event),
+      {"sourceHost", SourceHost} = lists:keyfind("sourceHost", 1, Payload),
       case dict:is_key(Host, State#a_multiple_hosts.hosts) of
         true ->
           SourceHostss = dict:fetch(Host, State#a_multiple_hosts.hosts),
@@ -59,12 +59,12 @@ accumulate(State, Event) ->
   end.
 
 compensate(State, WindowStart) ->
-  {NewEvents, ToDealWith} = a_repeated_login:deleteOlderThan(WindowStart, State#a_multiple_hosts.events),
+  {NewEvents, ToDealWith} = lists:partition(fun(E) -> {"occurrenceTime", Value} = lists:keyfind("occurrenceTime", 1, E), Value >= WindowStart end, State#a_multiple_hosts.events),
   NewHosts = deleteOld(ToDealWith, State#a_multiple_hosts.hosts),
   State#a_multiple_hosts{hosts = NewHosts, events = NewEvents}.
 
 emit(State) ->
-  Result = filterAndToList(dict:to_list(State#a_multiple_hosts.hosts)), %kedze uz netreba debug vypis, vraciam iba zoznam hostov
+  Result = [Host || {Host, SourceHosts} <- dict:to_list(State#a_multiple_hosts.hosts), sets:size(SourceHosts) > ?HOSTS],
   case State#a_multiple_hosts.conjunction of
     undefined ->
       ok; %Result;
@@ -81,9 +81,9 @@ conjunction(State, Pid) ->
 deleteOld([], Hostss) ->
   Hostss;
 deleteOld([E|Events], Hostss) ->
-  Host = a_utils:get("host", E),
-  Payload = a_utils:get("_", E),
-  SourceHost = a_utils:get("sourceHost", Payload),
+  {"host", Host} = lists:keyfind("host", 1, E),
+  {"_", Payload} = lists:keyfind("_", 1, E),
+  {"sourceHost", SourceHost} = lists:keyfind("sourceHost", 1, Payload),
 
   case dict:is_key(Host, Hostss) of
     true ->
@@ -103,19 +103,4 @@ deleteOld([E|Events], Hostss) ->
       end;
     false ->
       deleteOld(Events, Hostss)
-  end.
-
-
-filterAndToList(HostUsers) ->
-  filterAndToList(HostUsers, []).
-
-filterAndToList([], Lists) ->
-  Lists;
-filterAndToList([{Host, SourceHosts}|HostUsers], Lists) ->
-  Size = sets:size(SourceHosts),
-  if
-    Size > ?HOSTS ->
-      filterAndToList(HostUsers, [Host|Lists]);%s debug vypisom: filterAndToList(HostUsers, [{Host, sets:to_list(SourceHosts)}|Lists]);
-    Size =< ?HOSTS ->
-      filterAndToList(HostUsers, Lists)
   end.

@@ -10,7 +10,7 @@
 -export([compensate/2]).
 -export([emit/1]).
 
--export([deleteOlderThan/2, conjunction/2]).
+-export([conjunction/2]).
 
 -define(ATTEMPTS, 1000).
 
@@ -28,11 +28,11 @@ init() ->
   #a_repeated_login{hostusers = dict:new()}.
 
 accumulate(State, Event) ->
-  Type = a_utils:get("type", Event),
+  {"type", Type} = lists:keyfind("type", 1, Event),
   case Type of
     "org.ssh.Daemon#Login" ->
-      Payload = a_utils:get("_", Event),
-      Success = a_utils:get("success", Payload),
+      {"_", Payload} = lists:keyfind("_", 1, Event),
+      {"success", Success} = lists:keyfind("success", 1, Payload),
       case Success of
         true ->
           %io:format("Not interested in successful events. ~n"),
@@ -40,8 +40,8 @@ accumulate(State, Event) ->
         false ->
           NewEvents = State#a_repeated_login.events ++ [Event], %prave v tom [Event] bola chyba, tak nieze to zase zmazem
           NewState = State#a_repeated_login{events = NewEvents},
-          Host = a_utils:get("host", Event),
-          User = a_utils:get("user", Payload),
+          {"host", Host} = lists:keyfind("host", 1, Event),
+          {"user", User} = lists:keyfind("user", 1, Payload),
           case dict:is_key(Host, NewState#a_repeated_login.hostusers) of
             true ->
               UserCounts = dict:fetch(Host, NewState#a_repeated_login.hostusers),
@@ -65,12 +65,12 @@ accumulate(State, Event) ->
   end.
 
 compensate(State, WindowStart) -> %TODO drzat si events v okne a sem len posielat tie, co vypadli z okna
-  {NewEvents, ToDealWith} = deleteOlderThan(WindowStart, State#a_repeated_login.events),
+  {RemainingEvents, ToDealWith} = lists:partition(fun(E) -> {"occurrenceTime", Value} = lists:keyfind("occurrenceTime", 1, E), Value >= WindowStart end, State#a_repeated_login.events),
   NewHostUsers = decreaseCounters(ToDealWith, State#a_repeated_login.hostusers),
-  State#a_repeated_login{hostusers = NewHostUsers, events = NewEvents}.
+  State#a_repeated_login{hostusers = NewHostUsers, events = RemainingEvents}.
 
 emit(State) ->
-  Result = filterAndToList(dict:to_list(State#a_repeated_login.hostusers)), %kedze uz netreba debug vypis, vraciam iba zoznam hostov
+  Result = filterAndToList(dict:to_list(State#a_repeated_login.hostusers)),
   case State#a_repeated_login.conjunction of
     undefined ->
       ok; %Result;
@@ -86,9 +86,9 @@ conjunction(State, Pid) ->
 decreaseCounters([], HostUsers) ->
   HostUsers;
 decreaseCounters([E|Events], HostUsers) ->
-  Payload = a_utils:get("_", E),
-  Host = a_utils:get("host", E),
-  User = a_utils:get("user", Payload),
+  {"_", Payload} = lists:keyfind("_", 1, E),
+  {"host", Host} = lists:keyfind("host", 1, E),
+  {"user", User} = lists:keyfind("user", 1, Payload),
   UserCounts = dict:fetch(Host, HostUsers),
   Count = dict:fetch(User, UserCounts),
   case Count of
@@ -105,44 +105,16 @@ decreaseCounters([E|Events], HostUsers) ->
   end,
   decreaseCounters(Events, NewHostsUsers).
 
-
-deleteOlderThan(WindowStart, Events) ->
-  deleteOlderThan(WindowStart, Events, []).
-
-deleteOlderThan(_WindowStart, [], Deleted) -> %vracia udalosti v tvare {pozostale, vymazane}
-  {[], Deleted};
-deleteOlderThan(WindowStart, [E|Events], Deleted) ->
-  Timestamp = a_utils:get("occurrenceTime", E),
-  if
-    Timestamp < WindowStart ->
-      deleteOlderThan(WindowStart, Events, [E|Deleted]);
-    Timestamp >= WindowStart ->
-      {[E|Events], Deleted}
-  end.
-
 filterAndToList(HostUsers) ->
   filterAndToList(HostUsers, []).
 
 filterAndToList([], Lists) ->
   Lists;
 filterAndToList([{Host, UserCounts}|HostUsers], Lists) ->
-  CountOverATTEMPTS = keepJustCountOverATTEMPTS(dict:to_list(UserCounts)),
+  CountOverATTEMPTS = [{User, Count} || {User, Count} <- dict:to_list(UserCounts), Count > ?ATTEMPTS],
   if
     length(CountOverATTEMPTS) > 0 ->
       filterAndToList(HostUsers, [Host|Lists]);%ak treba debug vypis, tak: filterAndToList(HostUsers, [{Host, CountOverATTEMPTS}|Lists]);
     length(CountOverATTEMPTS) == 0 ->
       filterAndToList(HostUsers, Lists)
-  end.
-
-keepJustCountOverATTEMPTS(UserCounts) ->
-  keepJustCountOverATTEMPTS(UserCounts, []).
-
-keepJustCountOverATTEMPTS([], CountOverATTEMPTS) ->
-  CountOverATTEMPTS;
-keepJustCountOverATTEMPTS([{User, Count}|UserCounts], CountOverATTEMPTS) ->
-  if
-    Count > ?ATTEMPTS ->
-      keepJustCountOverATTEMPTS(UserCounts, [{User, Count}|CountOverATTEMPTS]);
-    Count =< ?ATTEMPTS ->
-      keepJustCountOverATTEMPTS(UserCounts, CountOverATTEMPTS)
   end.

@@ -1,14 +1,6 @@
 -module(a_utils).
 
--export([get/2, getNowInMillis/0]).
-
-get(_Key, []) ->
-  "";
-get(Key, [{Key, Value}|_Rest]) ->
-  Value;
-get(Key, [_|Rest]) ->
-  get(Key, Rest).
-
+-export([getNowInMillis/0]).
 
 getNowInMillis() ->
   {MegaSecs, Secs, MicroSecs} = now(),
